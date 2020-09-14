@@ -66,12 +66,12 @@ class FeatureAggregator(layers.Layer):
         return self.block2(y)
 
 class OutputTransform(layers.Layer):
-    def __init__(self, num_classes, mixture_components=None):
+    def __init__(self, object_classes, mixture_components=None):
         super(OutputTransform, self).__init__(name="OutputTransform")
 
         # Class Probabilities plus background
-        num_filters = num_classes + 1
-        for i in range(num_classes):
+        num_filters = object_classes + 1
+        for i in range(object_classes):
             k = mixture_components[i] if mixture_components is not None else 1
             # 8 components: dx, dy, wx, wy, l, w, s, alpha
             num_filters += (k * 8)
