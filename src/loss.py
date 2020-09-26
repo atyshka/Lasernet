@@ -6,6 +6,7 @@ class LasernetLoss(losses.Loss):
         super(LasernetLoss, self).__init__(name='output_transform')
         self.object_classes = object_classes
         self.mixture_components = mixture_components
+        self.mixture_components.insert(0, 1)
 
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor, gamma=2):
         shape = y_pred.get_shape()
@@ -13,8 +14,8 @@ class LasernetLoss(losses.Loss):
         num_classes = self.object_classes + 1
         num_components = sum(self.mixture_components)
         # B, W, H, Classes
-        pred_class, pred_box = tf.split(y_pred, [num_classes, 10 * num_components], axis=3)
-        
+        pred_class, pred_box_raw = tf.split(y_pred, [num_classes, 10 * num_components], axis=3)
+        pred_box = tf.pad(pred_box_raw, [[0, 0], [0, 0], [0, 0], [10, 0]])
         truth_class, truth_corners, truth_object_id = tf.split(y_true, [1, 8, 1], axis=-1)
         truth_class_onehot = tf.one_hot(truth_class, num_classes)
         categorical_loss = losses.categorical_crossentropy(truth_class_onehot, pred_class)
@@ -34,6 +35,7 @@ class LasernetLoss(losses.Loss):
         s3 = tf.RaggedTensor.from_uniform_row_length(s2, shape[1])
         # Expand to B x H x W x C x None x 10
         ragged_box_pred = tf.RaggedTensor.from_uniform_row_length(s3, shape[0])
+        # Fill the background class with zeroes
         # B x H x W x None x 10
         class_matched_box_pred = tf.gather(ragged_box_pred, truth_class, axis=3, batch_dims=3)
         pred_corners = class_matched_box_pred[:, :, :, :, :8]
