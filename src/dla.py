@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
+
 class ResnetBlock(layers.Layer):
   def __init__(self, num_filters, kernel_size=(3, 3), strides=(1, 1), reshape=False):
     super(ResnetBlock, self).__init__(name='ResnetBlock')
@@ -70,15 +71,13 @@ class OutputTransform(layers.Layer):
         super(OutputTransform, self).__init__(name="OutputTransform")
 
         # Class Probabilities plus background
-        num_filters = object_classes + 1
-        for i in range(object_classes):
-            k = mixture_components[i] if mixture_components is not None else 1
-            # 8 components: dx, dy, wx, wy, l, w, s, alpha
-            num_filters += (k * 8)
+        self.num_classes = object_classes + 1
+        self.num_components = sum(mixture_components) if mixture_components is not None else object_classes
         self.conv = layers.Conv2D(num_filters, (1, 1), use_bias=False)
         self.bn = layers.BatchNormalization()
 
     def call(self, input, training=False):
         x = self.conv(input)
         x = self.bn(x, training=training)
-        return tf.nn.relu(x)
+        pred_class, pred_alpha, pred_stddev, pred_box = tf.split(x, [self.num_classes, self.num_components, self.num_components, 6 * self.num_components], axis=3)
+        return pred_class, pred_alpha, pred_stddev, pred_box
