@@ -49,7 +49,7 @@ class FeatureExtractor(layers.Layer):
         return self.sequence(input_tensor, training=training)
 
 class FeatureAggregator(layers.Layer):
-    def __init__(self, num_filters, downsample=True):
+    def __init__(self, num_filters):
         super(FeatureAggregator, self).__init__(name='FeatureAggregator')
 
         self.upsample = layers.Conv2DTranspose(num_filters, (3, 3), padding='same')
@@ -65,19 +65,3 @@ class FeatureAggregator(layers.Layer):
         y = self.concat(fine_input, x)
         y = self.block1(y, training=training)
         return self.block2(y)
-
-class OutputTransform(layers.Layer):
-    def __init__(self, object_classes, mixture_components=None):
-        super(OutputTransform, self).__init__(name="OutputTransform")
-
-        # Class Probabilities plus background
-        self.num_classes = object_classes + 1
-        self.num_components = sum(mixture_components) if mixture_components is not None else object_classes
-        self.conv = layers.Conv2D(num_filters, (1, 1), use_bias=False)
-        self.bn = layers.BatchNormalization()
-
-    def call(self, input, training=False):
-        x = self.conv(input)
-        x = self.bn(x, training=training)
-        pred_class, pred_alpha, pred_stddev, pred_box = tf.split(x, [self.num_classes, self.num_components, self.num_components, 6 * self.num_components], axis=3)
-        return pred_class, pred_alpha, pred_stddev, pred_box
