@@ -4,8 +4,8 @@ from transforms import PredictionTransform, BoxToCorners
 from dla import FeatureAggregator, FeatureExtractor
 
 class LaserNet(keras.Model):
-    def __init__(self):
-        super(LaserNet, self).__init__()
+    def __init__(self, **kwargs):
+        super(LaserNet, self).__init__(**kwargs)
         self.block_1a = FeatureExtractor(64, downsample=False)
         self.block_1b = FeatureAggregator(64)
         self.block_2a = FeatureExtractor(64)
@@ -25,4 +25,6 @@ class LaserNet(keras.Model):
         classes, centers, alphas, log_stddevs = self.predict(raw_output, training=training)
         azimuth = inputs[:, :, :, 2]
         corners = self.corners(centers, xy, azimuth)
-        return classes, corners, alphas, log_stddevs
+        box_params = tf.concat([corners, alphas, log_stddevs], -1)
+        box_shape = box_params.get_shape()
+        return (classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1]))

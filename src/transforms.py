@@ -41,4 +41,7 @@ class BoxToCorners(layers.Layer):
         corner2 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([length, -1 * width], axis=-1))
         corner3 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([-1 * length, -1 * width], axis=-1))
         corner4 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([-1 * length, width], axis=-1))
-        return tf.concat([corner1, corner2, corner3, corner4], -1)
+        # B H W CK 1 8
+        concat = tf.concat([corner1, corner2, corner3, corner4], -1)
+        # B H W CK 8
+        return tf.squeeze(concat, 4)

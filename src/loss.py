@@ -1,22 +1,22 @@
 import tensorflow as tf
 from tensorflow.keras import losses
 
-class LasernetLoss(losses.Loss):
-    def __init__(self, object_classes=3, mixture_components=[1, 1, 1]):
-        super(LasernetLoss, self).__init__(name='output_transform')
+class LaserNetLoss(losses.Loss):
+    def __init__(self, object_classes=1, mixture_components=[1]):
+        super(LaserNetLoss, self).__init__(name='output_transform')
         self.object_classes = object_classes
         self.mixture_components = mixture_components
         self.mixture_components.insert(0, 1)
 
-    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor, gamma=2):
+    def call(self, y_true: (tf.Tensor, tf.Tensor, tf.Tensor), y_pred: (tf.Tensor, tf.Tensor), gamma=2):
         shape = y_pred.get_shape()
         num_pixels = shape[1] * shape[2]
         num_classes = self.object_classes + 1
         num_components = sum(self.mixture_components)
         # B, W, H, Classes
-        pred_class, pred_box_raw = tf.split(y_pred, [num_classes, 10 * num_components], axis=3)
+        (pred_class, pred_box_raw) = y_pred
         pred_box = tf.pad(pred_box_raw, [[0, 0], [0, 0], [0, 0], [10, 0]])
-        truth_class, truth_corners, truth_object_id = tf.split(y_true, [1, 8, 1], axis=-1)
+        (truth_class, truth_corners, truth_object_id) = y_true
         truth_class_onehot = tf.one_hot(truth_class, num_classes)
         categorical_loss = losses.categorical_crossentropy(truth_class_onehot, pred_class)
         pt = tf.exp(-1 * categorical_loss)
