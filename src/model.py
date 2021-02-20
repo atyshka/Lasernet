@@ -6,7 +6,7 @@ from dla import FeatureAggregator, FeatureExtractor
 class LaserNet(keras.Model):
     def __init__(self, **kwargs):
         super(LaserNet, self).__init__(**kwargs)
-        self.block_1a = FeatureExtractor(64, downsample=False)
+        self.block_1a = FeatureExtractor(64, downsample=False, reshape=True)
         self.block_1b = FeatureAggregator(64)
         self.block_2a = FeatureExtractor(64)
         self.block_1c = FeatureAggregator(64)
@@ -15,7 +15,8 @@ class LaserNet(keras.Model):
         self.predict = PredictionTransform(1, [1])
         self.corners = BoxToCorners()
 
-    def call(self, inputs, xy, training=False):
+    def call(self, inputs, training=False):
+        (inputs, xy) = inputs
         extract_1 = self.block_1a(inputs, training=training)
         extract_2 = self.block_2a(extract_1, training=training)
         extract_3 = self.block_3a(extract_2, training=training)

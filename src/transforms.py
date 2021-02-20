@@ -24,24 +24,27 @@ class BoxToCorners(layers.Layer):
 
     def call(self, center_params, xy, azimuth):
         # B H W CK 4
+        azimuth = tf.expand_dims(azimuth, -1)
         rotation_mat_flat = tf.stack([tf.math.cos(azimuth), -1 * tf.math.sin(azimuth), 
                                         tf.math.sin(azimuth), tf.math.cos(azimuth)], axis=-1)
         # B H W CK 2 2
-        rotation_mat = tf.reshape(rotation_mat_flat, tf.concat([rotation_mat_flat.get_shape(), [2, 2]], 0))
+        rotation_mat = tf.reshape(rotation_mat_flat, tf.concat([rotation_mat_flat.get_shape()[:-1], [2, 2]], 0))
         input_shape = center_params.get_shape()
         # B H W CK 6
         centers_grouped = tf.reshape(center_params, [input_shape[0], input_shape[1], input_shape[2], -1, 6])
         xy_offsets, sin, cos, length, width = tf.split(centers_grouped, [2, 1, 1, 1, 1], -1)
         # B H W CK 1 2
-        new_centers = tf.expand_dims(xy, -2) + rotation_mat @ tf.expand_dims(xy_offsets, -2)
-        orientation = azimuth + tf.math.atan2(sin, cos)
+        new_centers = tf.expand_dims(xy, -2) + tf.squeeze(rotation_mat @ tf.expand_dims(xy_offsets, -1), axis=-1)
+        print(xy.shape)
+        orientation = azimuth + tf.squeeze(tf.math.atan2(sin, cos), -1)
         orientation_mat_flat = tf.stack([tf.math.cos(orientation), -1 * tf.math.sin(orientation), 
                                         tf.math.sin(orientation), tf.math.cos(orientation)], axis=-1)
-        corner1 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([length, width], axis=-1))
-        corner2 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([length, -1 * width], axis=-1))
-        corner3 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([-1 * length, -1 * width], axis=-1))
-        corner4 = new_centers + 0.5 * (orientation_mat_flat @ tf.stack([-1 * length, width], axis=-1))
+        orientation_mat = tf.reshape(orientation_mat_flat, tf.concat([orientation_mat_flat.get_shape()[:-1], [2, 2]], 0))
+        corner1 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, width], axis=-2), -1)
+        corner2 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, -1 * width], axis=-2), -1)
+        corner3 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([-1 * length, -1 * width], axis=-2), -1)
+        corner4 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([-1 * length, width], axis=-2), -1)
         # B H W CK 1 8
         concat = tf.concat([corner1, corner2, corner3, corner4], -1)
         # B H W CK 8
-        return tf.squeeze(concat, 4)
+        return concat

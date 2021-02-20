@@ -4,8 +4,8 @@ from tensorflow.keras import layers
 
 
 class ResnetBlock(layers.Layer):
-  def __init__(self, num_filters, kernel_size=(3, 3), strides=(1, 1), reshape=False):
-    super(ResnetBlock, self).__init__(name='ResnetBlock')
+  def __init__(self, num_filters, kernel_size=(3, 3), strides=(1, 1), reshape=False, name=None):
+    super(ResnetBlock, self).__init__(name=name)
 
     self.conv1 = layers.Conv2D(num_filters, kernel_size, strides=strides, use_bias=False, padding='same')
     self.bn1 = layers.BatchNormalization()
@@ -20,7 +20,7 @@ class ResnetBlock(layers.Layer):
         self.skip_conn.add(layers.BatchNormalization())
     else:
         # Do nothing
-        self.skip_conn = lambda x: x
+        self.skip_conn = lambda x, **kwargs: x
 
   def call(self, input_tensor, training=False):
     x = self.conv1(input_tensor)
@@ -35,15 +35,15 @@ class ResnetBlock(layers.Layer):
     return tf.nn.relu(x)
 
 class FeatureExtractor(layers.Layer):
-    def __init__(self, num_filters, num_blocks=6, downsample=True):
+    def __init__(self, num_filters, num_blocks=6, downsample=True, reshape=False):
         super(FeatureExtractor, self).__init__(name='FeatureExtractor')
 
         self.sequence = keras.Sequential()
         # Downsample by 2 along horizontal
         if downsample:
-            self.sequence.add(ResnetBlock(num_filters, strides=(2, 1)))
-        for _ in range(num_blocks):
-            self.sequence.add(ResnetBlock(num_filters))
+            self.sequence.add(ResnetBlock(num_filters, strides=(1, 2), name="Downsample", reshape=reshape))
+        for i in range(num_blocks):
+            self.sequence.add(ResnetBlock(num_filters, name="Resnet_%i" % i, reshape=reshape))
 
     def call(self, input_tensor, training=False):
         return self.sequence(input_tensor, training=training)
@@ -52,7 +52,7 @@ class FeatureAggregator(layers.Layer):
     def __init__(self, num_filters):
         super(FeatureAggregator, self).__init__(name='FeatureAggregator')
 
-        self.upsample = layers.Conv2DTranspose(num_filters, (3, 3), padding='same')
+        self.upsample = layers.Conv2DTranspose(num_filters, (3, 3), (1,2), padding='same')
         self.bn = layers.BatchNormalization()
         self.concat = layers.Concatenate()
         self.block1 = ResnetBlock(num_filters, reshape=True)
@@ -62,6 +62,6 @@ class FeatureAggregator(layers.Layer):
         x = self.upsample(coarse_input)
         x = self.bn(x, training=training)
         x = tf.nn.relu(x)
-        y = self.concat(fine_input, x)
+        y = self.concat([fine_input, x])
         y = self.block1(y, training=training)
         return self.block2(y)
