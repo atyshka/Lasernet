@@ -15,6 +15,7 @@ class LaserNet(keras.Model):
         self.predict = PredictionTransform(1, [1])
         self.corners = BoxToCorners()
 
+    @tf.function(experimental_compile=True)
     def call(self, inputs, training=False):
         (inputs, xy) = inputs
         extract_1 = self.block_1a(inputs, training=training)
@@ -26,6 +27,6 @@ class LaserNet(keras.Model):
         classes, centers, alphas, log_stddevs = self.predict(raw_output, training=training)
         azimuth = inputs[:, :, :, 2]
         corners = self.corners(centers, xy, azimuth)
-        box_params = tf.concat([corners, alphas, log_stddevs], -1)
+        box_params = tf.concat([corners, tf.expand_dims(alphas, -1), tf.expand_dims(log_stddevs, -1)], -1)
         box_shape = box_params.get_shape()
-        return (classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1]))
+        return tf.concat([classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1])], axis=-1)
