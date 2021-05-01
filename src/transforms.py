@@ -28,8 +28,9 @@ class BoxToCorners(layers.Layer):
         rotation_mat_flat = tf.stack([tf.math.cos(azimuth), -1 * tf.math.sin(azimuth), 
                                         tf.math.sin(azimuth), tf.math.cos(azimuth)], axis=-1)
         # B H W CK 2 2
-        rotation_mat = tf.reshape(rotation_mat_flat, tf.concat([rotation_mat_flat.get_shape()[:-1], [2, 2]], 0))
-        input_shape = center_params.get_shape()
+        rot_mat_shape = tf.shape(rotation_mat_flat)
+        rotation_mat = tf.reshape(rotation_mat_flat, [rot_mat_shape[0], rot_mat_shape[1], rot_mat_shape[2], 1, 2, 2])
+        input_shape = tf.shape(center_params)
         # B H W CK 6
         centers_grouped = tf.reshape(center_params, [input_shape[0], input_shape[1], input_shape[2], -1, 6])
         xy_offsets, sin, cos, length, width = tf.split(centers_grouped, [2, 1, 1, 1, 1], -1)
@@ -39,7 +40,8 @@ class BoxToCorners(layers.Layer):
         orientation = azimuth + tf.squeeze(tf.math.atan2(sin, cos), -1)
         orientation_mat_flat = tf.stack([tf.math.cos(orientation), -1 * tf.math.sin(orientation), 
                                         tf.math.sin(orientation), tf.math.cos(orientation)], axis=-1)
-        orientation_mat = tf.reshape(orientation_mat_flat, tf.concat([orientation_mat_flat.get_shape()[:-1], [2, 2]], 0))
+        orient_shape = tf.shape(orientation_mat_flat)
+        orientation_mat = tf.reshape(orientation_mat_flat, [orient_shape[0], orient_shape[1], orient_shape[2], 1, 2, 2])
         corner1 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, width], axis=-2), -1)
         corner2 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, -1 * width], axis=-2), -1)
         corner3 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([-1 * length, -1 * width], axis=-2), -1)
