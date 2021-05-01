@@ -3,7 +3,7 @@ from tensorflow.keras import losses
 
 class LaserNetLoss(losses.Loss):
     def __init__(self, object_classes=1, mixture_components=[1]):
-        super(LaserNetLoss, self).__init__(name='output_transform')
+        super(LaserNetLoss, self).__init__(name='loss')
         self.object_classes = object_classes
         self.mixture_components = mixture_components
 
@@ -76,5 +76,33 @@ class LaserNetLoss(losses.Loss):
         # Note that we use this weighting technique so that objects with many points do not outweigh those with few
         weighted_regression_loss = tf.reduce_mean(tf.math.unsorted_segment_mean(flattened_regression_loss, flattened_object_ids, num_objects + 1)[1:])
         
-        total_loss = class_loss + weighted_regression_loss
+        total_loss = class_loss #+ weighted_regression_loss
         return total_loss
+
+class ClassLoss(losses.Loss):
+    def __init__(self, object_classes=1, mixture_components=[1]):
+        super(ClassLoss, self).__init__(name='class_loss')
+        self.object_classes = object_classes
+        self.mixture_components = mixture_components
+
+    def call(self, y_true: tf.Tensor, y_pred: (tf.Tensor, tf.Tensor), gamma=2):
+
+        shape = y_pred.get_shape()
+        num_pixels = shape[0] * shape[1] * shape[2]
+        num_classes = self.object_classes + 1
+        num_components = sum(self.mixture_components)
+        # B, W, H, Classes
+        # (pred_class, pred_box_raw) = y_pred
+        pred_class = y_pred[..., :num_classes]
+        pred_box_raw = y_pred[..., num_classes:]
+        pred_box = tf.pad(pred_box_raw, [[0, 0], [0, 0], [0, 0], [10, 0]])
+        truth_class, truth_corners, truth_object_id = tf.split(y_true, [1, 8, 1], axis=-1)
+        truth_class = tf.squeeze(tf.cast(truth_class, tf.int32), -1)
+        truth_object_id = tf.squeeze(tf.cast(truth_object_id, tf.int32), -1)
+        # (truth_class, truth_corners, truth_object_id) = y_true
+        truth_class_onehot = tf.one_hot(truth_class, num_classes)
+        categorical_loss = losses.categorical_crossentropy(truth_class_onehot, pred_class)
+        pt = tf.exp(-1 * categorical_loss)
+        focal_loss = tf.pow(1 - pt, gamma) * categorical_loss
+        class_loss = tf.reduce_sum(focal_loss) / num_pixels
+        return class_loss

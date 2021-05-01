@@ -31,3 +31,22 @@ class LaserNet(keras.Model):
         box_params = tf.concat([corners, tf.expand_dims(alphas, -1), tf.expand_dims(log_stddevs, -1)], -1)
         box_shape = box_params.get_shape()
         return tf.concat([classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1])], axis=-1)
+
+def build_lasernet_functional():
+    policy = tf.keras.mixed_precision.Policy('mixed_float16')
+    inputs = keras.Input(name="input_laser")
+    xy = keras.Input(name="input_xy")
+    extract_1 = FeatureExtractor(64, downsample=False, reshape=True, dtype=policy)(inputs)
+    extract_2 = FeatureExtractor(64, dtype=policy)(extract_1)
+    extract_3 = FeatureExtractor(64, dtype=policy)(extract_2)
+    aggregate_1 = FeatureAggregator(64, dtype=policy)(extract_1, extract_2)
+    aggregate_2 = FeatureAggregator(64, dtype=policy)(extract_2, extract_3)
+    raw_output = tf.cast(FeatureAggregator(64, dtype=policy)(aggregate_1, aggregate_2), tf.float32)
+    classes, centers, alphas, log_stddevs = PredictionTransform(1, [1])(raw_output)
+    classes = keras.layers.Lambda(lambda x: x, name="classes")(classes)
+    azimuth = inputs[:, :, :, 2]
+    corners = BoxToCorners()(centers, xy, azimuth)
+    box_params = tf.concat([corners, tf.expand_dims(alphas, -1), tf.expand_dims(log_stddevs, -1)], -1)
+    box_shape = box_params.get_shape()
+    box_reshaped = tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1], name="boxes")
+    return keras.Model(inputs=[inputs, xy], outputs=[classes, box_reshaped])
