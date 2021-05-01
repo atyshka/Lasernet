@@ -32,10 +32,11 @@ class LaserNet(keras.Model):
         box_shape = box_params.get_shape()
         return tf.concat([classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1])], axis=-1)
 
-def build_lasernet_functional():
-    policy = tf.keras.mixed_precision.Policy('mixed_float16')
+def build_lasernet_functional(means=0, variances=1, policy='mixed_float16'):
+    policy = tf.keras.mixed_precision.Policy(policy)
     inputs = keras.Input(name="input_laser")
     xy = keras.Input(name="input_xy")
+    inputs_norm = keras.layers.experimental.preprocessing.Normalization(mean=means, variance=variances)(inputs)
     extract_1 = FeatureExtractor(64, downsample=False, reshape=True, dtype=policy)(inputs)
     extract_2 = FeatureExtractor(64, dtype=policy)(extract_1)
     extract_3 = FeatureExtractor(64, dtype=policy)(extract_2)
