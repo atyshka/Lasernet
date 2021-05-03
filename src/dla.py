@@ -37,8 +37,8 @@ class ResnetBlock(layers.Layer):
     return tf.nn.relu6(x)
 
 class FeatureExtractor(layers.Layer):
-    def __init__(self, num_filters, num_blocks=6, downsample=True, reshape=False, dtype=None):
-        super(FeatureExtractor, self).__init__(name='FeatureExtractor', dtype=dtype)
+    def __init__(self, num_filters, num_blocks=6, downsample=True, reshape=False, dtype=None, name='FeatureExtractor'):
+        super(FeatureExtractor, self).__init__(name=name, dtype=dtype)
 
         self.sequence = keras.Sequential()
         # Downsample by 2 along horizontal
@@ -51,8 +51,8 @@ class FeatureExtractor(layers.Layer):
         return self.sequence(input_tensor, training=training)
 
 class FeatureAggregator(layers.Layer):
-    def __init__(self, num_filters, dtype=None):
-        super(FeatureAggregator, self).__init__(name='FeatureAggregator', dtype=dtype)
+    def __init__(self, num_filters, dtype=None, name='FeatureAggregator'):
+        super(FeatureAggregator, self).__init__(name=name, dtype=dtype)
 
         self.upsample = layers.Conv2DTranspose(num_filters, (3, 3), (1,2), padding='same', dtype=dtype)
         self.bn = layers.BatchNormalization(dtype=dtype)

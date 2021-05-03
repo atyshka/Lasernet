@@ -85,7 +85,7 @@ class ClassLoss(losses.Loss):
         self.object_classes = object_classes
         self.mixture_components = mixture_components
 
-    def call(self, y_true: tf.Tensor, y_pred: (tf.Tensor, tf.Tensor), gamma=2):
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor, gamma=2):
 
         shape = y_pred.get_shape()
         num_pixels = shape[0] * shape[1] * shape[2]
@@ -93,15 +93,11 @@ class ClassLoss(losses.Loss):
         num_components = sum(self.mixture_components)
         # B, W, H, Classes
         # (pred_class, pred_box_raw) = y_pred
-        pred_class = y_pred[..., :num_classes]
-        pred_box_raw = y_pred[..., num_classes:]
-        pred_box = tf.pad(pred_box_raw, [[0, 0], [0, 0], [0, 0], [10, 0]])
-        truth_class, truth_corners, truth_object_id = tf.split(y_true, [1, 8, 1], axis=-1)
-        truth_class = tf.squeeze(tf.cast(truth_class, tf.int32), -1)
-        truth_object_id = tf.squeeze(tf.cast(truth_object_id, tf.int32), -1)
+        pred_class = y_pred
+        truth_class = y_true
         # (truth_class, truth_corners, truth_object_id) = y_true
         truth_class_onehot = tf.one_hot(truth_class, num_classes)
-        categorical_loss = losses.categorical_crossentropy(truth_class_onehot, pred_class)
+        categorical_loss = losses.categorical_crossentropy(truth_class_onehot, pred_class, from_logits=True)
         pt = tf.exp(-1 * categorical_loss)
         focal_loss = tf.pow(1 - pt, gamma) * categorical_loss
         class_loss = tf.reduce_sum(focal_loss) / num_pixels
