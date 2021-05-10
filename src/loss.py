@@ -80,8 +80,8 @@ class LaserNetLoss(losses.Loss):
         return total_loss
 
 class ClassLoss(losses.Loss):
-    def __init__(self, object_classes=1, mixture_components=[1]):
-        super(ClassLoss, self).__init__(name='class_loss')
+    def __init__(self, reduction=None, name='class_loss', object_classes=1, mixture_components=[1]):
+        super(ClassLoss, self).__init__(name=name)
         self.object_classes = object_classes
         self.mixture_components = mixture_components
 

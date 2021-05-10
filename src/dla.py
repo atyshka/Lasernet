@@ -27,14 +27,14 @@ class ResnetBlock(layers.Layer):
   def call(self, input_tensor, training=False):
     x = self.conv1(input_tensor)
     x = self.bn1(x, training=training)
-    x = tf.nn.relu6(x)
+    x = tf.nn.relu(x)
 
     x = self.conv2(x)
     x = self.bn2(x, training=training)
 
     residual = self.skip_conn(input_tensor, training=training)
     x += residual
-    return tf.nn.relu6(x)
+    return tf.nn.relu(x)
 
 class FeatureExtractor(layers.Layer):
     def __init__(self, num_filters, num_blocks=6, downsample=True, reshape=False, dtype=None, name='FeatureExtractor'):
@@ -66,4 +66,4 @@ class FeatureAggregator(layers.Layer):
         x = tf.nn.relu(x)
         y = self.concat([fine_input, x])
         y = self.block1(y, training=training)
-        return self.block2(y)
+        return self.block2(y, training=training)
