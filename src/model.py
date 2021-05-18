@@ -33,16 +33,16 @@ class LaserNet(keras.Model):
         return tf.concat([classes, tf.reshape(box_params, [box_shape[0], box_shape[1], box_shape[2], -1])], axis=-1)
 
 def build_lasernet_functional(batch_size=4,means=0, variances=1, policy='mixed_float16'):
-    policy = tf.keras.mixed_precision.Policy(policy)
+    policy = 'float32'#tf.keras.mixed_precision.Policy(policy)
     inputs = keras.Input(shape=(64, 664, 5), name="input_laser")
     xy = keras.Input(shape=(64, 664, 2), name="input_xy")
     inputs_norm = keras.layers.experimental.preprocessing.Normalization(mean=means, variance=variances)(inputs)
     extract_1 = FeatureExtractor(64, downsample=False, reshape=True, dtype=policy, name="extract_1")(inputs_norm)
     extract_2 = FeatureExtractor(64, dtype=policy, name="extract_2")(extract_1)
-    extract_3 = FeatureExtractor(64, dtype=policy, name="extract_3")(extract_2)
+    extract_3 = FeatureExtractor(128, dtype=policy, name="extract_3")(extract_2)
     aggregate_1 = FeatureAggregator(64, dtype=policy, name="aggregate_1")(extract_1, extract_2)
-    aggregate_2 = FeatureAggregator(64, dtype=policy, name="aggregate_2")(extract_2, extract_3)
-    raw_output = tf.cast(FeatureAggregator(64, dtype=policy, name="aggregate_3")(aggregate_1, aggregate_2), tf.float32)
+    aggregate_2 = FeatureAggregator(128, dtype=policy, name="aggregate_2")(extract_2, extract_3)
+    raw_output = tf.cast(FeatureAggregator(128, dtype=policy, name="aggregate_3")(aggregate_1, aggregate_2), tf.float32)
     classes, centers, alphas, log_stddevs = PredictionTransform(1, [1])(raw_output)
     classes = keras.layers.Lambda(lambda x: x, name="classes")(classes)
     # azimuth = inputs[:, :, :, 2]

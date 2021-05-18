@@ -9,7 +9,7 @@ class PredictionTransform(layers.Layer):
         # Class Probabilities plus background
         self.num_classes = object_classes + 1
         self.num_components = sum(mixture_components) if mixture_components is not None else object_classes
-        self.conv = layers.Conv2D(self.num_classes + (8 * self.num_components), (1, 1), use_bias=False)
+        self.conv = layers.Conv2D(self.num_classes + (8 * self.num_components), (1, 1), kernel_initializer='he_normal')
         self.bn = layers.BatchNormalization()
 
     def call(self, input, training=False):

@@ -80,9 +80,9 @@ def map_py_function_to_dataset(dataset: tf.data.Dataset, map_function: Callable,
     mapped_dataset = py_mapper.map_to_dataset(dataset=dataset, output_types=output_types)
     return mapped_dataset
 
-file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord')
-# file_ds = tf.data.Dataset.list_files('/home/alex/lasernet-waymo/data/training/segment-6390847454531723238_6000_000_6020_000_with_camera_labels.tfrecord')
-record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=tf.data.AUTOTUNE)
+# file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord')
+# file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/segment-10017090168044687777_6380_000_6400_000_with_camera_labels.tfrecord')
+# record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=tf.data.AUTOTUNE)
 
 def parse_frame_parallel(data):
     frame = open_dataset.Frame()
@@ -127,7 +127,7 @@ def fill_boxes(input, indices, labels):
     dense_boxes = corners_from_centers(gathered)
     classes = tf.where(tf.greater_equal(indices, 1), 1, 0)
     classes = classes[..., 992:1656]
-    return input, {'classes': classes}#, "boxes": tf.concat([dense_boxes, tf.expand_dims(tf.cast(indices, tf.float32), -1)], -1)}
+    return input, {'classes': tf.stack([classes, tf.cast(input['input_laser'][..., 4], tf.int32)], -1)}#, "boxes": tf.concat([dense_boxes, tf.expand_dims(tf.cast(indices, tf.float32), -1)], -1)}
 
 def transform(r, e, i, labels):
     polar_image = range_image_utils.compute_range_image_polar(tf.expand_dims(r[..., 0], 0), tf.expand_dims(e, 0), tf.expand_dims(i, 0))
@@ -141,57 +141,87 @@ def transform(r, e, i, labels):
     indices = tf.reshape(tf.argmax(bool_match, axis=-1), r.get_shape()[:-1])
 
     azimuth = polar_image[0, ..., 0]
+    azimuth = tf.math.atan2(tf.math.sin(azimuth), tf.math.cos(azimuth))
     height = tf.math.sin(polar_image[0, ...,1]) * tf.math.maximum(polar_image[0, ..., 2], 0)
     range = polar_image[0, ..., 2]
     intensity = r[..., 1]
     mask = tf.greater_equal(r[..., 0], 0)
-    mask = tf.where(mask, 1.0, -1.0)
-    return {'input_laser': tf.stack([azimuth, height, range, intensity, mask], -1)[..., 992:1656, :], 'input_xy': tf.squeeze(cloud[..., 0:2], axis=0)[..., 992:1656, :]}, indices, tf.concat([[[0, 0, 0, 0, 0]], labels], 0)
+    mask = tf.where(mask, 1.0, 0.0)
+    input_laser = tf.stack([azimuth, height, range, intensity, mask], -1)
+    input_xy = tf.squeeze(cloud[..., 0:2], axis=0)
+    correction = tf.atan2(e[..., 1, 0], e[..., 0, 0])
+    input_laser = tf.roll(input_laser, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
+    input_xy = tf.roll(input_xy, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
+    indices = tf.roll(indices, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
+    return {'input_laser': input_laser[..., 992:1656, :], 'input_xy': input_xy[..., 992:1656, :]}, indices, tf.concat([[[0, 0, 0, 0, 0]], labels], 0)
 
-tensor_ds = tf.data.experimental.load('/home/alex/alex-usb/compressed_ds', (
-                                                    tf.TensorSpec(shape=[678400], dtype=tf.float32), 
-                                                    tf.TensorSpec(shape=[16], dtype=tf.float32), 
-                                                    tf.TensorSpec(shape=[64], dtype=tf.float32), 
-                                                    tf.TensorSpec(shape=None, dtype=tf.float32)),
-                                                    compression="GZIP"
-                                                    ).shuffle(1024).prefetch(128)
+def custom_reader_func(datasets: tf.data.Dataset):
+    datasets = datasets.shuffle(20)
+    return datasets.interleave(lambda x: x, num_parallel_calls=tf.data.AUTOTUNE, cycle_length=20)
+
+datasets = []
+for i in range(0, 20):
+    ds = tf.data.experimental.load('/home/alex/dataset-drive/ds_sharded/shard_%d'%i, (
+                            tf.TensorSpec(shape=[678400], dtype=tf.float32), 
+                            tf.TensorSpec(shape=[16], dtype=tf.float32), 
+                            tf.TensorSpec(shape=[64], dtype=tf.float32), 
+                            tf.TensorSpec(shape=None, dtype=tf.float32)), compression='GZIP')
+    datasets.append(ds)
+
+tensor_ds = tf.data.experimental.sample_from_datasets(datasets).repeat().shuffle(10000)
+# tensor_ds = tf.data.experimental.load('/home/alex/alex-usb/interleaved_ds', (
+#                                                     tf.TensorSpec(shape=[678400], dtype=tf.float32), 
+#                                                     tf.TensorSpec(shape=[16], dtype=tf.float32), 
+#                                                     tf.TensorSpec(shape=[64], dtype=tf.float32), 
+#                                                     tf.TensorSpec(shape=None, dtype=tf.float32)),
+#                                                     compression="GZIP", reader_func=custom_reader_func
+#                                                     ).repeat().shuffle(5000).prefetch(128)
+# tensor_ds = tf.data.experimental.load('/home/alex/dataset-drive/ds_sharded/shard_0', (
+#                         tf.TensorSpec(shape=[678400], dtype=tf.float32), 
+#                         tf.TensorSpec(shape=[16], dtype=tf.float32), 
+#                         tf.TensorSpec(shape=[64], dtype=tf.float32), 
+#                         tf.TensorSpec(shape=None, dtype=tf.float32)), compression='GZIP')
+# tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32)).cache().shuffle(200).repeat()
 tensor_ds = tensor_ds.map(shape, num_parallel_calls=32)
 tensor_ds = tensor_ds.map(transform, num_parallel_calls=32)
-tensor_ds = tensor_ds.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=128, drop_remainder=True))
-final_ds = tensor_ds.map(fill_boxes, num_parallel_calls=tf.data.AUTOTUNE).prefetch(2)
+tensor_ds = tensor_ds.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=64, drop_remainder=True))
+options = tf.data.Options()
+options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+final_ds = tensor_ds.map(fill_boxes, num_parallel_calls=tf.data.AUTOTUNE).with_options(options).prefetch(2)
 
-print("element spec:")
-print(final_ds.element_spec)
-logs = "logs/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs, update_freq=250)
+run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+logs = "logs/" + run_id
+tboard_callback = tf.keras.callbacks.TensorBoard(log_dir = logs, update_freq=10)
 model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    filepath='/home/alex/checkpoints/checkpoint-{epoch:02d}.ckpt',
+    filepath=os.path.join('checkpoints', run_id, 'checkpoint-{epoch:02d}.ckpt'),
     monitor='loss',
     mode='min',
     save_best_only=False)
 # original
-means = [-2.5962167 , -1.8928711 , 16.83029   ,  0.524463  ,  0.91721344]
-variances = [3.2898679e+00, 6.5204339e+00, 1.3595302e+02, 2.5995129e+03, 1.5871947e-01]
-# means = [-2.5825715 , -1.4563112 , 12.411071  , -0.03784659,  0.78327984]
-# variances = [ 0.2056163 ,  5.4643445 , 81.9744    ,  0.13470726,  0.3864727 ]
+# means = [-2.5876644, -2.120523 , 18.519848 , 15.371667 ,  0.834153 ]
+# variances = [2.0690569e-01, 1.2527465e+01, 2.7277847e+02, 4.0037647e+05, 0.27668]
+means = [8.6231437e-04, -2.0784380e+00,  1.7843075e+01,  9.4569902e+00, 7.8301370e-01]
+variances = [2.0686106e-01, 1.2035955e+01, 2.8855536e+02, 2.5339364e+05, 1.6990326e-01]
 
 mirrored_strategy = tf.distribute.MirroredStrategy()
 with mirrored_strategy.scope():
-    model = build_lasernet_functional(batch_size=128, means=means, variances=variances)
-schedule = tf.keras.optimizers.schedules.ExponentialDecay(0.002, 150, 0.99)
+    model = build_lasernet_functional(means=means, variances=variances)
+schedule = tf.keras.optimizers.schedules.ExponentialDecay(0.001, 150, 0.99)
 optimizer = tf.keras.optimizers.Adam(learning_rate=schedule)
 model.compile(optimizer=optimizer, loss={'classes': ClassLoss()})
 
+# print(logs + '/images')
 file_writer = tf.summary.create_file_writer(logs + '/images')
+repeated_ds = final_ds.take(1).cache()
 def evaluate_images(epoch, logs):
-    data, label = next(iter(final_ds.take(1)))
-    test_pred_raw = model.predict(data)
-    test_pred = tf.keras.layers.Softmax()(test_pred_raw)[..., 1:]
-    test_label = tf.int32.max * tf.expand_dims(label['classes'], -1)
-    print("Writing Images")
-    print(test_pred)
-    with file_writer.as_default():
-        tf.summary.image("Prediction", test_pred, step=epoch, max_outputs=4)
-        tf.summary.image("Label", test_label, step=epoch, max_outputs=4)
+    for data, label in repeated_ds:
+        test_pred_raw = model.predict(data)
+        test_pred = tf.keras.layers.Softmax()(test_pred_raw)[..., 1:]
+        test_label = tf.int32.max * label['classes'][..., 0:1]
+        with file_writer.as_default():
+            tf.summary.image("Prediction", test_pred, step=epoch, max_outputs=4)
+            tf.summary.image("Label", test_label, step=epoch, max_outputs=4)
+        break
+            # Prints false if images are not written because epoch length not divisible by update_freq
 
-model.fit(final_ds, steps_per_epoch=10, epochs=1, batch_size=128, callbacks = [tboard_callback, tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_images), model_checkpoint_callback])
+model.fit(final_ds, epochs=20, steps_per_epoch=2470, callbacks = [tboard_callback, tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_images), model_checkpoint_callback])
