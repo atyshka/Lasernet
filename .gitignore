@@ -2,3 +2,4 @@
 \.vscode/
 data/training/
 logs/
+checkpoints/

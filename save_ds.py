@@ -80,9 +80,13 @@ def map_py_function_to_dataset(dataset: tf.data.Dataset, map_function: Callable,
     mapped_dataset = py_mapper.map_to_dataset(dataset=dataset, output_types=output_types)
     return mapped_dataset
 
-file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord').shuffle(100)
+file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord').shuffle(800)
 # file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/segment-10017090168044687777_6380_000_6400_000_with_camera_labels.tfrecord')
-record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=tf.data.AUTOTUNE)
+print('Dataset Len %d' % len(file_ds))
+record_ds = file_ds.interleave(lambda x: tf.data.TFRecordDataset(x),
+    cycle_length=len(file_ds), num_parallel_calls=4,
+    deterministic=False)
+# record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=len(file_ds))
 
 def parse_frame_parallel(data):
     frame = open_dataset.Frame()
@@ -101,9 +105,9 @@ def parse_frame_parallel(data):
     vehicle_labels = tf.convert_to_tensor(vehicle_labels)
     return range_image_tensor, extrinsic, beam_inclinations, vehicle_labels
 
-tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32)).shuffle(2048)
+tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32)).shuffle(20000)
 
 def shard_func(w, x, y, z):
     return tf.random.uniform([1], minval=0, maxval=20, dtype=tf.int64)
 
-tf.data.experimental.save(tensor_ds, '/home/alex/lasernet-waymo/compressed_ds', compression='GZIP', shard_func=shard_func)
+tf.data.experimental.save(tensor_ds, '/home/alex/alex-usb/interleaved_ds', compression='GZIP', shard_func=shard_func)
