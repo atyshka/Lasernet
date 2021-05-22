@@ -94,15 +94,16 @@ class ClassLoss(losses.Loss):
         # B, W, H, Classes
         # (pred_class, pred_box_raw) = y_pred
         pred_class = y_pred
-        truth_class, mask = tf.unstack(y_true, axis=-1)
+        truth_class, mask, nlz = tf.unstack(y_true, axis=-1)
         # (truth_class, truth_corners, truth_object_id) = y_true
         truth_class_onehot = tf.one_hot(truth_class, num_classes)
         categorical_loss = losses.CategoricalCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE, label_smoothing=0.1)(truth_class_onehot, pred_class)
         # tf.print(categorical_loss.shape)
         pt = tf.exp(-1 * categorical_loss)
         focal_loss = tf.pow(1 - pt, gamma) * categorical_loss
-        focal_loss = tf.where(mask == 1, focal_loss, 0.0)
-        class_loss = tf.reduce_sum(focal_loss) / tf.cast(tf.reduce_sum(mask), tf.float32)
+        included = (mask == 1) & (nlz == -1)
+        focal_loss = tf.where(included, focal_loss, 0.0)
+        class_loss = tf.reduce_sum(focal_loss) / tf.reduce_sum(tf.cast(included, tf.float32))
         return class_loss
         # categorical_loss = tf.where(mask == 1, categorical_loss, 0.0)
         # return tf.reduce_sum(categorical_loss) / tf.cast(tf.reduce_sum(mask), tf.float32)

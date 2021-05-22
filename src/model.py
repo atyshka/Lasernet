@@ -34,8 +34,8 @@ class LaserNet(keras.Model):
 
 def build_lasernet_functional(batch_size=4,means=0, variances=1, policy='mixed_float16'):
     policy = 'float32'#tf.keras.mixed_precision.Policy(policy)
-    inputs = keras.Input(shape=(64, 664, 5), name="input_laser")
-    xy = keras.Input(shape=(64, 664, 2), name="input_xy")
+    inputs = keras.Input(shape=(64, 2648, 5), name="input_laser")
+    xy = keras.Input(shape=(64, 2648, 2), name="input_xy")
     inputs_norm = keras.layers.experimental.preprocessing.Normalization(mean=means, variance=variances)(inputs)
     extract_1 = FeatureExtractor(64, downsample=False, reshape=True, dtype=policy, name="extract_1")(inputs_norm)
     extract_2 = FeatureExtractor(64, dtype=policy, name="extract_2")(extract_1)

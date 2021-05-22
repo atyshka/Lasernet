@@ -122,16 +122,16 @@ def corners_from_centers(center_boxes):
     # B H W 8
     return tf.concat([corner1, corner2, corner3, corner4], -1)
 
-def fill_boxes(input, indices, labels):
+def fill_boxes(input, nlz, indices, labels):
     gathered = tf.gather(labels, indices, axis=1, batch_dims=1)
     dense_boxes = corners_from_centers(gathered)
     classes = tf.where(tf.greater_equal(indices, 1), 1, 0)
-    classes = classes[..., 992:1656]
-    return input, {'classes': tf.stack([classes, tf.cast(input['input_laser'][..., 4], tf.int32)], -1)}#, "boxes": tf.concat([dense_boxes, tf.expand_dims(tf.cast(indices, tf.float32), -1)], -1)}
+    classes = classes[..., 0:2648]
+    return input, {'classes': tf.stack([classes, tf.cast(input['input_laser'][..., 4], tf.int32), tf.cast(nlz, tf.int32)], -1)}#, "boxes": tf.concat([dense_boxes, tf.expand_dims(tf.cast(indices, tf.float32), -1)], -1)}
 
 def transform(r, e, i, labels):
     polar_image = range_image_utils.compute_range_image_polar(tf.expand_dims(r[..., 0], 0), tf.expand_dims(e, 0), tf.expand_dims(i, 0))
-    cloud = range_image_utils.compute_range_image_cartesian(polar_image, tf.expand_dims(e, 0))
+    cloud = range_image_utils.compute_range_image_cartesian(polar_image, tf.expand_dims(tf.reverse(e, [-1]), 0))
     # print(cloud.get_shape().num_elements())
     flattened_cloud = tf.reshape(cloud[..., 0:2], [cloud.get_shape().num_elements() // 3, 2])
     bool_match = box_utils.is_within_box_2d(flattened_cloud, labels)
@@ -145,6 +145,7 @@ def transform(r, e, i, labels):
     height = tf.math.sin(polar_image[0, ...,1]) * tf.math.maximum(polar_image[0, ..., 2], 0)
     range = polar_image[0, ..., 2]
     intensity = r[..., 1]
+    nlz = r[..., 3]
     mask = tf.greater_equal(r[..., 0], 0)
     mask = tf.where(mask, 1.0, 0.0)
     input_laser = tf.stack([azimuth, height, range, intensity, mask], -1)
@@ -153,7 +154,7 @@ def transform(r, e, i, labels):
     input_laser = tf.roll(input_laser, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
     input_xy = tf.roll(input_xy, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
     indices = tf.roll(indices, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
-    return {'input_laser': input_laser[..., 992:1656, :], 'input_xy': input_xy[..., 992:1656, :]}, indices, tf.concat([[[0, 0, 0, 0, 0]], labels], 0)
+    return {'input_laser': input_laser[..., 0:2648, :], 'input_xy': input_xy[..., 0:2648, :]}, nlz[..., 0:2648], indices, tf.concat([[[0, 0, 0, 0, 0]], labels], 0)
 
 def custom_reader_func(datasets: tf.data.Dataset):
     datasets = datasets.shuffle(20)
@@ -168,23 +169,10 @@ for i in range(0, 20):
                             tf.TensorSpec(shape=None, dtype=tf.float32)), compression='GZIP')
     datasets.append(ds)
 
-tensor_ds = tf.data.experimental.sample_from_datasets(datasets).repeat().shuffle(10000)
-# tensor_ds = tf.data.experimental.load('/home/alex/alex-usb/interleaved_ds', (
-#                                                     tf.TensorSpec(shape=[678400], dtype=tf.float32), 
-#                                                     tf.TensorSpec(shape=[16], dtype=tf.float32), 
-#                                                     tf.TensorSpec(shape=[64], dtype=tf.float32), 
-#                                                     tf.TensorSpec(shape=None, dtype=tf.float32)),
-#                                                     compression="GZIP", reader_func=custom_reader_func
-#                                                     ).repeat().shuffle(5000).prefetch(128)
-# tensor_ds = tf.data.experimental.load('/home/alex/dataset-drive/ds_sharded/shard_0', (
-#                         tf.TensorSpec(shape=[678400], dtype=tf.float32), 
-#                         tf.TensorSpec(shape=[16], dtype=tf.float32), 
-#                         tf.TensorSpec(shape=[64], dtype=tf.float32), 
-#                         tf.TensorSpec(shape=None, dtype=tf.float32)), compression='GZIP')
-# tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32)).cache().shuffle(200).repeat()
+tensor_ds = tf.data.experimental.sample_from_datasets(datasets).shuffle(1000)
 tensor_ds = tensor_ds.map(shape, num_parallel_calls=32)
 tensor_ds = tensor_ds.map(transform, num_parallel_calls=32)
-tensor_ds = tensor_ds.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=64, drop_remainder=True))
+tensor_ds = tensor_ds.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=16, drop_remainder=True))
 options = tf.data.Options()
 options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
 final_ds = tensor_ds.map(fill_boxes, num_parallel_calls=tf.data.AUTOTUNE).with_options(options).prefetch(2)
@@ -202,7 +190,6 @@ model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
 # variances = [2.0690569e-01, 1.2527465e+01, 2.7277847e+02, 4.0037647e+05, 0.27668]
 means = [8.6231437e-04, -2.0784380e+00,  1.7843075e+01,  9.4569902e+00, 7.8301370e-01]
 variances = [2.0686106e-01, 1.2035955e+01, 2.8855536e+02, 2.5339364e+05, 1.6990326e-01]
-
 mirrored_strategy = tf.distribute.MirroredStrategy()
 with mirrored_strategy.scope():
     model = build_lasernet_functional(means=means, variances=variances)
@@ -218,10 +205,12 @@ def evaluate_images(epoch, logs):
         test_pred_raw = model.predict(data)
         test_pred = tf.keras.layers.Softmax()(test_pred_raw)[..., 1:]
         test_label = tf.int32.max * label['classes'][..., 0:1]
+        test_nlz = (tf.int32.max * label['classes'][..., 2:] + 1) / 2
         with file_writer.as_default():
             tf.summary.image("Prediction", test_pred, step=epoch, max_outputs=4)
             tf.summary.image("Label", test_label, step=epoch, max_outputs=4)
+            tf.summary.image("No Label Zone", test_nlz, step=epoch, max_outputs=4)
         break
             # Prints false if images are not written because epoch length not divisible by update_freq
 
-model.fit(final_ds, epochs=20, steps_per_epoch=2470, callbacks = [tboard_callback, tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_images), model_checkpoint_callback])
+model.fit(final_ds.take(1230), epochs=40, callbacks = [tboard_callback, tf.keras.callbacks.LambdaCallback(on_epoch_end=evaluate_images), model_checkpoint_callback])
