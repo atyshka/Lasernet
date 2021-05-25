@@ -6,7 +6,7 @@ from tensorboard.plugins.mesh import summary_v2
 from waymo_open_dataset import dataset_pb2 as open_dataset
 from waymo_open_dataset.utils import range_image_utils, transform_utils, frame_utils, box_utils
 
-file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/segment-10082223140073588526_6140_000_6160_000_with_camera_labels.tfrecord')
+file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord')
 record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=tf.data.AUTOTUNE)
 
 def parse_frame(data):
@@ -56,9 +56,8 @@ def fill_boxes(input, nlz, indices, labels):
     return input, {'classes': tf.stack([classes, tf.cast(input['input_laser'][..., 4], tf.int32), tf.cast(nlz, tf.int32)], -1)}#, "boxes": tf.concat([dense_boxes, tf.expand_dims(tf.cast(indices, tf.float32), -1)], -1)}
 
 def transform(r, e, i, labels):
-    polar_image = range_image_utils.compute_range_image_polar(tf.expand_dims(r[..., 0], 0), tf.expand_dims(e, 0), tf.expand_dims(i, 0))
-    cloud = range_image_utils.compute_range_image_cartesian(polar_image, tf.expand_dims(tf.reverse(e, [-1]), 0))
-    # print(cloud.get_shape().num_elements())
+    polar_image = range_image_utils.compute_range_image_polar(tf.expand_dims(r[..., 0], 0), tf.expand_dims(e, 0), tf.reverse(tf.expand_dims(i, 0), [-1]))
+    cloud = range_image_utils.compute_range_image_cartesian(polar_image, tf.expand_dims(e, 0))
     flattened_cloud = tf.reshape(cloud[..., 0:2], [cloud.get_shape().num_elements() // 3, 2])
     bool_match = box_utils.is_within_box_2d(flattened_cloud, labels)
     # Pad to add a zero-index indicating no box match
@@ -67,7 +66,8 @@ def transform(r, e, i, labels):
     indices = tf.reshape(tf.argmax(bool_match, axis=-1), r.get_shape()[:-1])
 
     azimuth = polar_image[0, ..., 0]
-    azimuth = tf.math.atan2(tf.math.sin(azimuth), tf.math.cos(azimuth))
+    correction = tf.atan2(e[..., 1, 0], e[..., 0, 0])
+    azimuth = azimuth + correction
     height = tf.math.sin(polar_image[0, ...,1]) * tf.math.maximum(polar_image[0, ..., 2], 0)
     range = polar_image[0, ..., 2]
     intensity = r[..., 1]
@@ -76,10 +76,6 @@ def transform(r, e, i, labels):
     mask = tf.where(mask, 1.0, 0.0)
     input_laser = tf.stack([azimuth, height, range, intensity, mask], -1)
     input_xyz = tf.squeeze(cloud[..., 0:], axis=0)
-    correction = tf.atan2(e[..., 1, 0], e[..., 0, 0])
-    input_laser = tf.roll(input_laser, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
-    input_xyz = tf.roll(input_xyz, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
-    indices = tf.roll(indices, tf.cast((correction / math.pi) * 2650 / 2, tf.int32), 1)
     return {'input_laser': input_laser[..., 0:2648, :], 'input_xyz': input_xyz[..., 0:2648, :]}, nlz[..., 0:2648], indices, tf.concat([[[0, 0, 0, 0, 0]], labels], 0)
 
 def custom_reader_func(datasets: tf.data.Dataset):
@@ -101,16 +97,16 @@ tensor_ds = tensor_ds.map(shape, num_parallel_calls=32)
 tensor_ds = tensor_ds.map(transform, num_parallel_calls=32)
 
 data = next(iter(tensor_ds))
-points = tf.reshape(data[0]['input_xyz'], [-1, 3]).numpy()
+points = tf.reshape(data['input_xyz'], [-1, 3]).numpy()
 
 cloud_writer = tf.summary.create_file_writer('cloud_logs')
 with cloud_writer.as_default():
-    az = data[0]['input_laser'][..., 0]
+    az = data['input_laser'][..., 0]
     hue = (az + math.pi) / (4*math.pi)
     saturation = tf.ones_like(hue);
     value = tf.ones_like(hue)
     rgb = tf.image.hsv_to_rgb(tf.stack([hue, saturation, value], -1)) * 255
-    summary_v2.mesh('mesh', tf.reshape(data[0]['input_xyz'], [1, -1, 3]), colors=tf.reshape(rgb, [1, -1, 3]), step=0, config_dict={"material": {'cls': 'PointsMaterial','size': 0.5}})
+    summary_v2.mesh('mesh', tf.reshape(data['input_xyz'], [1, -1, 3]), colors=tf.reshape(rgb, [1, -1, 3]), step=0, config_dict={"material": {'cls': 'PointsMaterial','size': 0.1}})
 # print('points created')
 # pcd = o3d.geometry.PointCloud()
 # pcd.points = o3d.utility.Vector3dVector(points)
