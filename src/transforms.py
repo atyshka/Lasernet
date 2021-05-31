@@ -36,12 +36,11 @@ class BoxToCorners(layers.Layer):
         xy_offsets, sin, cos, length, width = tf.split(centers_grouped, [2, 1, 1, 1, 1], -1)
         # B H W CK 1 2
         new_centers = tf.expand_dims(xy, -2) + tf.squeeze(rotation_mat @ tf.expand_dims(xy_offsets, -1), axis=-1)
-        print(xy.shape)
         orientation = azimuth + tf.squeeze(tf.math.atan2(sin, cos), -1)
         orientation_mat_flat = tf.stack([tf.math.cos(orientation), -1 * tf.math.sin(orientation), 
                                         tf.math.sin(orientation), tf.math.cos(orientation)], axis=-1)
         orient_shape = tf.shape(orientation_mat_flat)
-        orientation_mat = tf.reshape(orientation_mat_flat, [orient_shape[0], orient_shape[1], orient_shape[2], 1, 2, 2])
+        orientation_mat = tf.reshape(orientation_mat_flat, [orient_shape[0], orient_shape[1], orient_shape[2], orient_shape[3], 2, 2])
         corner1 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, width], axis=-2), -1)
         corner2 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([length, -1 * width], axis=-2), -1)
         corner3 = new_centers + 0.5 * tf.squeeze(orientation_mat @ tf.stack([-1 * length, -1 * width], axis=-2), -1)

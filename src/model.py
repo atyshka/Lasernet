@@ -44,7 +44,7 @@ def build_lasernet_functional(batch_size=4,means=0, variances=1, policy='mixed_f
     aggregate_1 = FeatureAggregator(64, dtype=policy, name="aggregate_1")(extract_1, extract_2)
     aggregate_2 = FeatureAggregator(128, dtype=policy, name="aggregate_2")(extract_2, extract_3)
     raw_output = tf.cast(FeatureAggregator(128, dtype=policy, name="aggregate_3")(aggregate_1, aggregate_2), tf.float32)
-    classes, centers, alphas, log_stddevs = PredictionTransform(1, [1])(raw_output)
+    classes, centers, alphas, log_stddevs = PredictionTransform(3, [1, 1, 1])(raw_output)
     classes = keras.layers.Lambda(lambda x: x, name="classes")(classes)
     azimuth = inputs[..., 2]
     corners = BoxToCorners()(centers, xy, azimuth)

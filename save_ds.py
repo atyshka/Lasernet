@@ -1,14 +1,6 @@
-import os
 import tensorflow as tf
-import tensorflow.experimental.numpy as tnp
-import math
 import numpy as np
-import itertools
-import sys
 
-from src.model import LaserNet, build_lasernet_functional
-from src.loss import LaserNetLoss, ClassLoss
-from tensorflow import keras
 from datetime import datetime
 
 from waymo_open_dataset.utils import range_image_utils, transform_utils, frame_utils, box_utils
@@ -80,34 +72,73 @@ def map_py_function_to_dataset(dataset: tf.data.Dataset, map_function: Callable,
     mapped_dataset = py_mapper.map_to_dataset(dataset=dataset, output_types=output_types)
     return mapped_dataset
 
-file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/*.tfrecord').shuffle(800)
-# file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/training/segment-10017090168044687777_6380_000_6400_000_with_camera_labels.tfrecord')
-print('Dataset Len %d' % len(file_ds))
-record_ds = file_ds.interleave(lambda x: tf.data.TFRecordDataset(x),
-    cycle_length=len(file_ds), num_parallel_calls=4,
-    deterministic=False)
-# record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=len(file_ds))
+file_ds = tf.data.Dataset.list_files('gs://waymo_open_dataset_v_1_2_0_individual_files/validation/*.tfrecord')
+# record_ds = file_ds.interleave(lambda x: tf.data.TFRecordDataset(x),
+#     cycle_length=len(file_ds), num_parallel_calls=4,
+#     deterministic=False)
+record_ds = tf.data.TFRecordDataset(file_ds, num_parallel_reads=tf.data.AUTOTUNE)
 
 def parse_frame_parallel(data):
     frame = open_dataset.Frame()
     frame.ParseFromString(data.numpy())
-    top_image = frame_utils.parse_range_image_and_camera_projection(frame)[0][open_dataset.LaserName.TOP][0]
+    top_image, _, top_pose = frame_utils.parse_range_image_and_camera_projection(frame)
+    top_image = top_image[open_dataset.LaserName.TOP][0]
     range_image_tensor = tf.convert_to_tensor(top_image.data)
+    range_image_top_pose_tensor = tf.convert_to_tensor(top_pose.data)
     frame.context.laser_calibrations.sort(key=lambda laser: laser.name)
     c = frame.context.laser_calibrations[open_dataset.LaserName.TOP-1]
     extrinsic = tf.convert_to_tensor(c.extrinsic.transform)
     beam_inclinations = tf.convert_to_tensor(c.beam_inclinations)
     vehicle_labels = []
+    pedestrian_labels = []
+    cyclist_labels = []
     for label in frame.laser_labels:
         if label.type == label.TYPE_VEHICLE:
             vehicle_labels.append([label.box.center_x, label.box.center_y, label.box.length, label.box.width, label.box.heading])
-    num_labels = len(vehicle_labels)
+        elif label.type == label.TYPE_CYCLIST:
+            cyclist_labels.append([label.box.center_x, label.box.center_y, label.box.length, label.box.width, label.box.heading])
+        elif label.type == label.TYPE_PEDESTRIAN:
+            pedestrian_labels.append([label.box.center_x, label.box.center_y, label.box.length, label.box.width, label.box.heading])
     vehicle_labels = tf.convert_to_tensor(vehicle_labels)
-    return range_image_tensor, extrinsic, beam_inclinations, vehicle_labels
+    pedestrian_labels = tf.convert_to_tensor(pedestrian_labels)
+    cyclist_labels = tf.convert_to_tensor(cyclist_labels)
+    frame_pose = tf.convert_to_tensor(value=np.reshape(np.array(frame.pose.transform), [4, 4]))
+    return range_image_tensor, extrinsic, beam_inclinations, vehicle_labels, pedestrian_labels, cyclist_labels, range_image_top_pose_tensor, frame_pose
 
-tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32)).shuffle(20000)
+def top_pose(range_image_tensor, extrinsic, beam_inclinations, vehicle_labels, pedestrian_labels, cyclist_labels, range_image_top_pose_tensor, frame_pose):
+    range_image_tensor = tf.reshape(range_image_tensor, [64, 2650, 4])
+    range_image_top_pose_tensor = tf.reshape(range_image_top_pose_tensor, [64, 2650, 6])
+    extrinsic = tf.reshape(extrinsic, [4,4])
+    range_image_top_pose_tensor_rotation = transform_utils.get_rotation_matrix(
+      range_image_top_pose_tensor[..., 0], range_image_top_pose_tensor[..., 1],
+      range_image_top_pose_tensor[..., 2])
+    range_image_top_pose_tensor_translation = range_image_top_pose_tensor[..., 3:]
+    range_image_top_pose_tensor = transform_utils.get_transform(
+        range_image_top_pose_tensor_rotation,
+        range_image_top_pose_tensor_translation)
+    pixel_pose_local = range_image_top_pose_tensor
+    pixel_pose_local = tf.expand_dims(pixel_pose_local, axis=0)
+    frame_pose_local = tf.expand_dims(frame_pose, axis=0)
+    range_image_cartesian = range_image_utils.extract_point_cloud_from_range_image(
+        tf.expand_dims(range_image_tensor[..., 0], axis=0),
+        tf.expand_dims(extrinsic, axis=0),
+        tf.expand_dims(tf.convert_to_tensor(value=beam_inclinations), axis=0),
+        pixel_pose=pixel_pose_local,
+        frame_pose=frame_pose_local)
+    range_image_cartesian = tf.squeeze(range_image_cartesian, axis=0)
+    
+    return range_image_tensor, extrinsic, beam_inclinations, vehicle_labels, pedestrian_labels, cyclist_labels, range_image_cartesian
 
-def shard_func(w, x, y, z):
+tensor_ds = map_py_function_to_dataset(record_ds, parse_frame_parallel, 32, (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float64))
+tensor_ds = tensor_ds.map(top_pose, tf.data.AUTOTUNE)
+
+def shard_func(w, x, y, z, a, b, c):
     return tf.random.uniform([1], minval=0, maxval=20, dtype=tf.int64)
 
-tf.data.experimental.save(tensor_ds, '/home/alex/alex-usb/interleaved_ds', compression='GZIP', shard_func=shard_func)
+print(tensor_ds.element_spec)
+tf.data.experimental.save(tensor_ds, '/home/alex/full_validation', compression='GZIP', shard_func=shard_func)
+# for i in range(20):
+#     shard = tensor_ds.take(7904)
+#     shard = shard.shuffle(7904)
+#     tf.data.experimental.save(shard, '/home/alex/dataset-drive/ds_sharded_final/shard_%d'%i, compression='GZIP', shard_func=lambda w,x,y,z: tf.constant(i, dtype=tf.int64))
+#     tensor_ds = tensor_ds.skip(7904)
